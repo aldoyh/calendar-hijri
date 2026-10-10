@@ -18,6 +18,13 @@ $pdo->exec("
     CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, completed INTEGER DEFAULT 0, due_time TEXT DEFAULT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS birthdays (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, date TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS quotes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL UNIQUE, is_displayed INTEGER DEFAULT 0);
+    
+    CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, amount REAL NOT NULL, category TEXT NOT NULL, date TEXT NOT NULL, note TEXT);
+    CREATE TABLE IF NOT EXISTS goals (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, target_date TEXT, progress INTEGER DEFAULT 0, is_completed INTEGER DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS journal_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL UNIQUE, mood TEXT, content TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS habits (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS habit_logs (habit_id INTEGER NOT NULL, date TEXT NOT NULL, PRIMARY KEY(habit_id, date));
+    CREATE TABLE IF NOT EXISTS vault_items (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, content TEXT NOT NULL);
 ");
 
 // Migration check for quotes table
@@ -27,8 +34,8 @@ if (!in_array('is_displayed', $quoteCols, true)) {
 }
 
 $defaultSettings = [
-    'header_img' => 'https://images.unsplash.com/photo-1518895949257-7621c3c786d7?q=80&w=2000',
-    'header_pos_y' => '42',
+    'header_img' => './uploads/header_cover.jpg',
+    'header_pos_y' => '40',
     'theme_mode' => 'dark',
     'lang' => 'ar',
     'avatar_img' => 'https://api.dicebear.com/7.x/avataaars/svg?seed=Shaikha2026'
@@ -265,6 +272,53 @@ if (isset($_GET['api'])) {
                 echo json_encode(['ok' => true]); break;
             case 'get_quote':
                 echo json_encode(['ok' => true, 'quote' => getNextQuote($pdo)]); break;
+                
+            // New APIs
+            case 'add_transaction':
+                $pdo->prepare("INSERT INTO transactions (type, amount, category, date, note) VALUES (?, ?, ?, ?, ?)")->execute([$payload['type'], (float)$payload['amount'], trim($payload['category']), $payload['date'], trim($payload['note'])]);
+                echo json_encode(['ok' => true, 'id' => (int)$pdo->lastInsertId()]); break;
+            case 'delete_transaction':
+                $pdo->prepare("DELETE FROM transactions WHERE id = ?")->execute([(int)$payload['id']]);
+                echo json_encode(['ok' => true]); break;
+                
+            case 'add_goal':
+                $pdo->prepare("INSERT INTO goals (title, target_date) VALUES (?, ?)")->execute([trim($payload['title']), $payload['target_date']]);
+                echo json_encode(['ok' => true, 'id' => (int)$pdo->lastInsertId()]); break;
+            case 'update_goal_progress':
+                $pdo->prepare("UPDATE goals SET progress = ?, is_completed = ? WHERE id = ?")->execute([(int)$payload['progress'], $payload['progress'] >= 100 ? 1 : 0, (int)$payload['id']]);
+                echo json_encode(['ok' => true]); break;
+            case 'delete_goal':
+                $pdo->prepare("DELETE FROM goals WHERE id = ?")->execute([(int)$payload['id']]);
+                echo json_encode(['ok' => true]); break;
+                
+            case 'save_journal':
+                $pdo->prepare("INSERT INTO journal_entries (date, mood, content) VALUES (:d, :m, :c) ON CONFLICT(date) DO UPDATE SET mood = :m, content = :c")->execute([':d' => $payload['date'], ':m' => $payload['mood'], ':c' => trim($payload['content'])]);
+                echo json_encode(['ok' => true]); break;
+                
+            case 'add_habit':
+                $pdo->prepare("INSERT INTO habits (name) VALUES (?)")->execute([trim($payload['name'])]);
+                echo json_encode(['ok' => true, 'id' => (int)$pdo->lastInsertId()]); break;
+            case 'toggle_habit_log':
+                $logged = $pdo->prepare("SELECT 1 FROM habit_logs WHERE habit_id = ? AND date = ?");
+                $logged->execute([(int)$payload['habit_id'], $payload['date']]);
+                if ($logged->fetchColumn()) {
+                    $pdo->prepare("DELETE FROM habit_logs WHERE habit_id = ? AND date = ?")->execute([(int)$payload['habit_id'], $payload['date']]);
+                } else {
+                    $pdo->prepare("INSERT INTO habit_logs (habit_id, date) VALUES (?, ?)")->execute([(int)$payload['habit_id'], $payload['date']]);
+                }
+                echo json_encode(['ok' => true]); break;
+            case 'delete_habit':
+                $pdo->prepare("DELETE FROM habits WHERE id = ?")->execute([(int)$payload['id']]);
+                $pdo->prepare("DELETE FROM habit_logs WHERE habit_id = ?")->execute([(int)$payload['id']]);
+                echo json_encode(['ok' => true]); break;
+                
+            case 'add_vault_item':
+                $pdo->prepare("INSERT INTO vault_items (title, content) VALUES (?, ?)")->execute([trim($payload['title']), trim($payload['content'])]);
+                echo json_encode(['ok' => true, 'id' => (int)$pdo->lastInsertId()]); break;
+            case 'delete_vault_item':
+                $pdo->prepare("DELETE FROM vault_items WHERE id = ?")->execute([(int)$payload['id']]);
+                echo json_encode(['ok' => true]); break;
+                
             default:
                 http_response_code(404); echo json_encode(['error' => 'Not found']);
         }
@@ -276,6 +330,13 @@ $settings = $pdo->query("SELECT key, value FROM settings")->fetchAll(PDO::FETCH_
 $reminders = $pdo->query("SELECT id, date, content FROM reminders ORDER BY id ASC")->fetchAll();
 $tasks = $pdo->query("SELECT id, title, completed, due_time FROM tasks ORDER BY id DESC")->fetchAll();
 $birthdays = $pdo->query("SELECT id, name, date FROM birthdays ORDER BY date ASC")->fetchAll();
+
+$transactions = $pdo->query("SELECT * FROM transactions ORDER BY date DESC, id DESC")->fetchAll();
+$goals = $pdo->query("SELECT * FROM goals ORDER BY is_completed ASC, target_date ASC")->fetchAll();
+$journal_entries = $pdo->query("SELECT * FROM journal_entries ORDER BY date DESC")->fetchAll();
+$habits = $pdo->query("SELECT * FROM habits ORDER BY id ASC")->fetchAll();
+$habit_logs = $pdo->query("SELECT * FROM habit_logs")->fetchAll();
+$vault_items = $pdo->query("SELECT * FROM vault_items ORDER BY id DESC")->fetchAll();
 $initialQuote = getNextQuote($pdo);
 $activeTheme = $settings['theme_mode'] ?? 'dark';
 $activeLang = $settings['lang'] ?? 'ar';
@@ -476,7 +537,7 @@ $activeLang = $settings['lang'] ?? 'ar';
                     <ul class="space-y-1">
                         <template x-for="(item, idx) in i18n[lang].navItems" :key="idx">
                             <li>
-                                <a href="#" class="flex items-center gap-4 px-4 py-3 rounded-2xl hover:bg-secondary text-sm font-bold text-foreground/80 hover:text-foreground transition-all group border border-transparent hover:border-border/50">
+                                <a href="#" @click.prevent="changePage(item.id)" :class="{'bg-secondary text-foreground border-border/50': activePage === item.id}" class="flex items-center gap-4 px-4 py-3 rounded-2xl hover:bg-secondary text-sm font-bold text-foreground/80 hover:text-foreground transition-all group border border-transparent hover:border-border/50">
                                     <span x-text="item.icon" class="text-lg group-hover:scale-125 group-hover:rotate-6 transition-transform duration-300"></span>
                                     <span x-text="item.title"></span>
                                 </a>
@@ -517,8 +578,14 @@ $activeLang = $settings['lang'] ?? 'ar';
                 </div>
             </aside>
 
-            <!-- CENTER COLUMN: Calendar Dual-Date Matrix -->
-            <section class="gsap-panel col-span-12 lg:col-span-6 bg-card border border-border rounded-[2rem] p-8 shadow-sm opacity-0">
+            <!-- Dynamic Pages Wrapper -->
+            <div class="col-span-12 lg:col-span-9 relative">
+                
+                <!-- DASHBOARD PAGE -->
+                <div x-show="activePage === 'dashboard'" x-transition.opacity.duration.300ms class="page-container grid grid-cols-12 gap-6 lg:gap-8 items-start">
+                    
+                    <!-- CENTER COLUMN: Calendar Dual-Date Matrix -->
+                    <section class="gsap-panel col-span-12 lg:col-span-8 bg-card border border-border rounded-[2rem] p-8 shadow-sm opacity-0">
                 <div class="flex items-center justify-between mb-8">
                     <div>
                         <h2 class="text-3xl font-black text-foreground mb-1" x-text="monthNames[lang][currentMonth] + ' ' + currentYear"></h2>
@@ -575,8 +642,8 @@ $activeLang = $settings['lang'] ?? 'ar';
                 </div>
             </section>
 
-            <!-- RIGHT COLUMN: Tasks -->
-            <aside class="col-span-12 lg:col-span-3 space-y-6">
+                    <!-- RIGHT COLUMN: Tasks -->
+                    <aside class="col-span-12 lg:col-span-4 space-y-6">
                 <div class="gsap-panel bg-card border border-border rounded-[2rem] p-6 shadow-sm opacity-0 flex flex-col h-[520px]">
                     <div class="flex items-center justify-between mb-5">
                         <h2 class="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-amber-500/50"></span> <span x-text="i18n[lang].quickTasksTitle"></span></h2>
@@ -607,10 +674,219 @@ $activeLang = $settings['lang'] ?? 'ar';
                     </div>
                 </div>
                 
-                <div class="gsap-panel text-center p-5 bg-card border border-border rounded-[2rem] opacity-0 glass-panel shadow-sm hover:shadow-md transition-shadow">
-                    <p class="text-[10px] font-black tracking-widest text-muted-foreground uppercase">**Made with Love ❤️ in Bahrain 🇧🇭**</p>
+                        <div class="gsap-panel text-center p-5 bg-card border border-border rounded-[2rem] opacity-0 glass-panel shadow-sm hover:shadow-md transition-shadow">
+                            <p class="text-[10px] font-black tracking-widest text-muted-foreground uppercase">**Made with Love ❤️ in Bahrain 🇧🇭**</p>
+                        </div>
+                    </aside>
                 </div>
-            </aside>
+
+                <!-- FINANCE PAGE -->
+                <div x-show="activePage === 'finance'" x-cloak x-transition.opacity.duration.300ms class="page-container" style="display: none;">
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8 items-start">
+                        <!-- Add Transaction Form -->
+                        <div class="col-span-1 lg:col-span-1 bg-card border border-border rounded-[2rem] p-6 shadow-sm">
+                            <h2 class="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2 mb-5"><span class="w-2 h-2 rounded-full bg-emerald-500/50"></span> Add Transaction</h2>
+                            <form @submit.prevent="addTransaction()" class="space-y-4">
+                                <div>
+                                    <select x-model="newTransaction.type" class="w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
+                                        <option value="expense">Expense (-)</option>
+                                        <option value="income">Income (+)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <input type="number" step="0.01" x-model="newTransaction.amount" placeholder="Amount..." required class="w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
+                                </div>
+                                <div>
+                                    <input type="text" x-model="newTransaction.category" placeholder="Category (e.g. Food, Salary)..." required class="w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
+                                </div>
+                                <div>
+                                    <input type="text" x-model="newTransaction.note" placeholder="Note (Optional)..." class="w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
+                                </div>
+                                <button type="submit" class="w-full bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-bold py-2.5 transition shadow-lg shadow-primary/20">Add Record</button>
+                            </form>
+                        </div>
+                        
+                        <!-- Transactions List & Balance -->
+                        <div class="col-span-1 lg:col-span-2 bg-card border border-border rounded-[2rem] p-6 shadow-sm flex flex-col h-[520px]">
+                            <div class="flex items-center justify-between mb-5">
+                                <h2 class="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-blue-500/50"></span> Transactions</h2>
+                                <div class="text-sm font-black" :class="financeBalance >= 0 ? 'text-emerald-500' : 'text-red-500'" x-text="'Balance: ' + financeBalance"></div>
+                            </div>
+                            <div class="flex-1 overflow-y-auto space-y-2 pe-2 custom-scrollbar">
+                                <template x-for="t in transactions" :key="t.id">
+                                    <div class="flex items-center justify-between p-3 rounded-2xl bg-secondary/50 border border-border/50 group hover:border-primary/30 transition-colors">
+                                        <div class="flex items-center gap-3">
+                                            <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs" :class="t.type === 'income' ? 'bg-emerald-500/20 text-emerald-500' : 'bg-red-500/20 text-red-500'" x-text="t.type === 'income' ? '+$' : '-$'"></div>
+                                            <div>
+                                                <p class="text-xs font-bold text-foreground mb-0.5" x-text="t.category"></p>
+                                                <p class="text-[10px] text-muted-foreground font-mono" x-text="t.date"></p>
+                                            </div>
+                                        </div>
+                                        <div class="flex items-center gap-3">
+                                            <span class="text-xs font-bold font-mono text-foreground" x-text="t.amount"></span>
+                                            <button @click="deleteTransaction(t.id)" class="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-500 transition px-1">✕</button>
+                                        </div>
+                                    </div>
+                                </template>
+                                <template x-if="transactions.length === 0"><div class="text-xs text-muted-foreground/50 text-center py-4 italic" x-text="i18n[lang].noData"></div></template>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- GOALS PAGE -->
+                <div x-show="activePage === 'goals'" x-cloak x-transition.opacity.duration.300ms class="page-container" style="display: none;">
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8 items-start">
+                        <div class="col-span-1 lg:col-span-1 bg-card border border-border rounded-[2rem] p-6 shadow-sm">
+                            <h2 class="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2 mb-5"><span class="w-2 h-2 rounded-full bg-purple-500/50"></span> New Goal</h2>
+                            <form @submit.prevent="addGoal()" class="space-y-4">
+                                <div>
+                                    <input type="text" x-model="newGoal.title" placeholder="Goal Title..." required class="w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
+                                </div>
+                                <div>
+                                    <input type="date" x-model="newGoal.target_date" class="w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-xs font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
+                                </div>
+                                <button type="submit" class="w-full bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-bold py-2.5 transition shadow-lg shadow-primary/20">Add Goal</button>
+                            </form>
+                        </div>
+                        
+                        <div class="col-span-1 lg:col-span-2 bg-card border border-border rounded-[2rem] p-6 shadow-sm flex flex-col h-[520px]">
+                            <h2 class="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2 mb-5"><span class="w-2 h-2 rounded-full bg-indigo-500/50"></span> Tracked Goals</h2>
+                            <div class="flex-1 overflow-y-auto space-y-3 pe-2 custom-scrollbar">
+                                <template x-for="g in goals" :key="g.id">
+                                    <div class="p-4 rounded-2xl bg-secondary/50 border border-border/50 group hover:border-primary/30 transition-colors relative overflow-hidden" :class="g.is_completed ? 'opacity-60' : ''">
+                                        <div class="flex items-center justify-between mb-3">
+                                            <div>
+                                                <p class="text-sm font-bold text-foreground mb-0.5" x-text="g.title"></p>
+                                                <p class="text-[10px] text-muted-foreground font-mono" x-text="'Target: ' + (g.target_date || 'No Date')"></p>
+                                            </div>
+                                            <button @click="deleteGoal(g.id)" class="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-500 transition px-1 relative z-10">✕</button>
+                                        </div>
+                                        <div class="flex items-center gap-3 relative z-10">
+                                            <input type="range" min="0" max="100" :value="g.progress" @change="updateGoalProgress(g.id, $event.target.value)" class="flex-1 accent-primary cursor-ew-resize">
+                                            <span class="text-xs font-bold font-mono text-primary w-10 text-end" x-text="g.progress + '%'"></span>
+                                        </div>
+                                        <div class="absolute bottom-0 start-0 h-1 bg-primary/20 transition-all duration-500" :style="'width: ' + g.progress + '%'"></div>
+                                    </div>
+                                </template>
+                                <template x-if="goals.length === 0"><div class="text-xs text-muted-foreground/50 text-center py-4 italic" x-text="i18n[lang].noData"></div></template>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- JOURNAL PAGE -->
+                <div x-show="activePage === 'journal'" x-cloak x-transition.opacity.duration.300ms class="page-container" style="display: none;">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-start">
+                        <div class="col-span-1 bg-card border border-border rounded-[2rem] p-6 shadow-sm">
+                            <h2 class="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2 mb-5"><span class="w-2 h-2 rounded-full bg-rose-500/50"></span> Today's Journal</h2>
+                            <form @submit.prevent="saveJournal()" class="space-y-4">
+                                <select id="journal-mood" :value="todayJournal.mood" class="w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
+                                    <option value="happy">Happy 😊</option>
+                                    <option value="neutral">Neutral 😐</option>
+                                    <option value="sad">Sad 😔</option>
+                                    <option value="productive">Productive ⚡</option>
+                                    <option value="tired">Tired 🥱</option>
+                                </select>
+                                <textarea id="journal-content" :value="todayJournal.content" placeholder="Write your thoughts..." required class="w-full h-64 bg-secondary/50 border border-border rounded-xl p-4 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"></textarea>
+                                <button type="submit" class="w-full bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-bold py-2.5 transition shadow-lg shadow-primary/20">Save Journal</button>
+                            </form>
+                        </div>
+                        <div class="col-span-1 bg-card border border-border rounded-[2rem] p-6 shadow-sm flex flex-col h-[520px]">
+                            <h2 class="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2 mb-5"><span class="w-2 h-2 rounded-full bg-orange-500/50"></span> Past Entries</h2>
+                            <div class="flex-1 overflow-y-auto space-y-4 pe-2 custom-scrollbar">
+                                <template x-for="j in journalEntries" :key="j.id">
+                                    <div class="p-4 rounded-2xl bg-secondary/30 border border-border/50">
+                                        <div class="flex items-center justify-between mb-2">
+                                            <span class="text-[10px] font-mono text-primary bg-primary/10 px-2 py-0.5 rounded-md" x-text="j.date"></span>
+                                            <span class="text-xs" x-text="j.mood"></span>
+                                        </div>
+                                        <p class="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap" x-text="j.content"></p>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- HABITS PAGE -->
+                <div x-show="activePage === 'habits'" x-cloak x-transition.opacity.duration.300ms class="page-container bg-card border border-border rounded-[2rem] p-6 shadow-sm" style="display: none;">
+                    <div class="flex items-center justify-between mb-6">
+                        <h2 class="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-green-500/50"></span> Habit Tracker</h2>
+                        <form @submit.prevent="addHabit()" class="flex gap-2">
+                            <input type="text" x-model="newHabitName" placeholder="New habit..." required class="w-48 bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
+                            <button type="submit" class="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-bold px-4 py-2 transition shadow-md">+</button>
+                        </form>
+                    </div>
+                    
+                    <div class="overflow-x-auto pb-4 custom-scrollbar">
+                        <table class="w-full text-start border-collapse">
+                            <thead>
+                                <tr>
+                                    <th class="p-3 text-start text-[10px] font-bold text-muted-foreground uppercase sticky start-0 bg-card z-10 w-48">Habit</th>
+                                    <template x-for="d in pastDates" :key="d">
+                                        <th class="p-2 text-center text-[9px] font-mono text-muted-foreground" x-text="d.split('-')[2]"></th>
+                                    </template>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="h in habits" :key="h.id">
+                                    <tr class="group hover:bg-secondary/20 border-t border-border/30 transition-colors">
+                                        <td class="p-3 sticky start-0 bg-card group-hover:bg-secondary/40 transition-colors">
+                                            <div class="flex items-center justify-between">
+                                                <span class="text-xs font-bold text-foreground" x-text="h.name"></span>
+                                                <button @click="deleteHabit(h.id)" class="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-500 transition px-1 text-xs">✕</button>
+                                            </div>
+                                        </td>
+                                        <template x-for="d in pastDates" :key="d">
+                                            <td class="p-2 text-center">
+                                                <button @click="toggleHabitLog(h.id, d)" 
+                                                        class="w-6 h-6 rounded-md border transition-all flex items-center justify-center mx-auto"
+                                                        :class="isHabitLogged(h.id, d) ? 'bg-primary border-primary text-primary-foreground shadow-sm' : 'bg-secondary/50 border-border hover:border-primary/50 text-transparent hover:text-primary/30'">
+                                                    <span class="text-[10px]">✓</span>
+                                                </button>
+                                            </td>
+                                        </template>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                        <template x-if="habits.length === 0"><div class="text-xs text-muted-foreground/50 text-center py-8 italic" x-text="i18n[lang].noData"></div></template>
+                    </div>
+                </div>
+
+                <!-- VAULT PAGE -->
+                <div x-show="activePage === 'vault'" x-cloak x-transition.opacity.duration.300ms class="page-container" style="display: none;">
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8 items-start">
+                        <div class="col-span-1 lg:col-span-1 bg-card border border-border rounded-[2rem] p-6 shadow-sm">
+                            <h2 class="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2 mb-5"><span class="w-2 h-2 rounded-full bg-cyan-500/50"></span> Store Vault Item</h2>
+                            <form @submit.prevent="addVaultItem()" class="space-y-4">
+                                <input type="text" x-model="newVaultItem.title" placeholder="Title (e.g. WiFi Password)..." required class="w-full bg-secondary/50 border border-border rounded-xl px-4 py-2.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
+                                <textarea x-model="newVaultItem.content" placeholder="Content/Value..." required class="w-full h-32 bg-secondary/50 border border-border rounded-xl p-4 text-xs font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"></textarea>
+                                <button type="submit" class="w-full bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-bold py-2.5 transition shadow-lg shadow-primary/20">Encrypt & Store</button>
+                            </form>
+                        </div>
+                        <div class="col-span-1 lg:col-span-2 bg-card border border-border rounded-[2rem] p-6 shadow-sm flex flex-col h-[520px]">
+                            <h2 class="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2 mb-5"><span class="w-2 h-2 rounded-full bg-gray-500/50"></span> Secure Vault</h2>
+                            <div class="flex-1 overflow-y-auto space-y-3 pe-2 custom-scrollbar">
+                                <template x-for="v in vaultItems" :key="v.id">
+                                    <div class="p-4 rounded-2xl bg-secondary/30 border border-border/50 group hover:border-primary/30 transition-colors">
+                                        <div class="flex items-center justify-between mb-2">
+                                            <span class="text-sm font-bold text-foreground" x-text="v.title"></span>
+                                            <div class="flex items-center gap-2">
+                                                <button @click="navigator.clipboard.writeText(v.content); addToast('Copied')" class="text-xs text-primary bg-primary/10 px-2 py-1 rounded-md font-bold hover:bg-primary/20 transition">Copy</button>
+                                                <button @click="deleteVaultItem(v.id)" class="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-500 transition px-1">✕</button>
+                                            </div>
+                                        </div>
+                                        <div class="text-[10px] font-mono text-muted-foreground/50 select-all p-2 bg-background rounded-lg border border-border/50" style="filter: blur(4px); transition: filter 0.3s;" onmouseover="this.style.filter='none'" onmouseout="this.style.filter='blur(4px)'" x-text="v.content"></div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
         </div>
     </main>
 
@@ -691,13 +967,25 @@ $activeLang = $settings['lang'] ?? 'ar';
                 time: { h: '00', m: '00', s: '00', dayName: '' },
                 currentMonth: new Date().getMonth(), currentYear: new Date().getFullYear(),
                 
+                activePage: 'dashboard',
+
                 reminders: <?= json_encode($reminders, JSON_UNESCAPED_UNICODE) ?>,
                 tasks: <?= json_encode($tasks, JSON_UNESCAPED_UNICODE) ?>,
                 birthdays: <?= json_encode($birthdays, JSON_UNESCAPED_UNICODE) ?>,
+                transactions: <?= json_encode($transactions, JSON_UNESCAPED_UNICODE) ?>,
+                goals: <?= json_encode($goals, JSON_UNESCAPED_UNICODE) ?>,
+                journalEntries: <?= json_encode($journal_entries, JSON_UNESCAPED_UNICODE) ?>,
+                habits: <?= json_encode($habits, JSON_UNESCAPED_UNICODE) ?>,
+                habitLogs: <?= json_encode($habit_logs, JSON_UNESCAPED_UNICODE) ?>,
+                vaultItems: <?= json_encode($vault_items, JSON_UNESCAPED_UNICODE) ?>,
                 currentQuote: <?= json_encode($initialQuote, JSON_UNESCAPED_UNICODE) ?>,
                 
                 modalOpen: false, activeDate: '', newRem: '',
                 newTask: { title: '', time: '' }, newBday: { name: '', date: '' },
+                newTransaction: { type: 'expense', amount: '', category: '', note: '' },
+                newGoal: { title: '', target_date: '' },
+                newHabitName: '',
+                newVaultItem: { title: '', content: '' },
                 toasts: [], toastIdSeed: 0,
 
                 mediaModalOpen: false, mediaTarget: '', mediaUrl: '',
@@ -712,7 +1000,7 @@ $activeLang = $settings['lang'] ?? 'ar';
                         dayModalTitle: 'المفكرة والملاحظات', noRemindersYet: 'لا توجد ملاحظات مسجلة لهذا اليوم.',
                         reminderInputPlaceholder: 'اكتب ملاحظتك وسيتم حفظها فوراً...', cancelBtn: 'إلغاء', saveEntryBtn: 'حفظ التغييرات',
                         noData: 'لا يوجد بيانات',
-                        navItems: [{ title: 'المالية', icon: '💳' }, { title: 'الأهداف', icon: '🎯' }, { title: 'المذكرات', icon: '📖' }, { title: 'العادات', icon: '🌿' }, { title: 'متفرقات', icon: '📦' }]
+                        navItems: [{ id: 'dashboard', title: 'الرئيسية', icon: '🏠' }, { id: 'finance', title: 'المالية', icon: '💳' }, { id: 'goals', title: 'الأهداف', icon: '🎯' }, { id: 'journal', title: 'المذكرات', icon: '📖' }, { id: 'habits', title: 'العادات', icon: '🌿' }, { id: 'vault', title: 'متفرقات', icon: '📦' }]
                     },
                     en: {
                         appTitle: 'Calendarify Pro', greeting: 'Welcome Back',
@@ -723,7 +1011,7 @@ $activeLang = $settings['lang'] ?? 'ar';
                         dayModalTitle: 'Daily Log', noRemindersYet: 'No logs for this date yet.',
                         reminderInputPlaceholder: 'Type and persist instantly...', cancelBtn: 'Cancel', saveEntryBtn: 'Save Changes',
                         noData: 'No data found',
-                        navItems: [{ title: 'Finance', icon: '💳' }, { title: 'Goals', icon: '🎯' }, { title: 'Journal', icon: '📖' }, { title: 'Habits', icon: '🌿' }, { title: 'Vault', icon: '📦' }]
+                        navItems: [{ id: 'dashboard', title: 'Dashboard', icon: '🏠' }, { id: 'finance', title: 'Finance', icon: '💳' }, { id: 'goals', title: 'Goals', icon: '🎯' }, { id: 'journal', title: 'Journal', icon: '📖' }, { id: 'habits', title: 'Habits', icon: '🌿' }, { id: 'vault', title: 'Vault', icon: '📦' }]
                     }
                 },
                 monthNames: {
@@ -761,6 +1049,20 @@ $activeLang = $settings['lang'] ?? 'ar';
 
                 get daysInMonth() { return Array.from({ length: new Date(this.currentYear, this.currentMonth + 1, 0).getDate() }, (_, i) => i + 1); },
                 get offset() { return new Date(this.currentYear, this.currentMonth, 1).getDay(); },
+                
+                get pastDates() {
+                    return Array.from({length: 14}, (_, i) => {
+                        const d = new Date();
+                        d.setDate(d.getDate() - 13 + i);
+                        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                    });
+                },
+
+                changePage(pageId) {
+                    if (this.activePage === pageId) return;
+                    this.activePage = pageId;
+                },
+
                 changeMonth(d) { this.currentMonth += d; if(this.currentMonth > 11) { this.currentMonth = 0; this.currentYear++; } else if(this.currentMonth < 0) { this.currentMonth = 11; this.currentYear--; } this.animGrid(); },
                 resetMonth() { this.currentMonth = new Date().getMonth(); this.currentYear = new Date().getFullYear(); this.animGrid(); },
                 fmtDate(d) { return `${this.currentYear}-${String(this.currentMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`; },
@@ -788,6 +1090,64 @@ $activeLang = $settings['lang'] ?? 'ar';
                 async delTask(id) { await this.apiCall('delete_task', { id }); this.tasks = this.tasks.filter(t => t.id !== id); this.addToast('Task deleted'); },
                 async addBday() { if (!this.newBday.name.trim() || !this.newBday.date.trim()) return; const res = await this.apiCall('add_birthday', this.newBday); if (res.ok) { this.birthdays.push({ id: res.id, name: this.newBday.name, date: this.newBday.date }); this.newBday = {name:'', date:''}; this.animItem('.birthday-item'); this.addToast('Birthday added'); } },
                 async delBday(id) { await this.apiCall('delete_birthday', { id }); this.birthdays = this.birthdays.filter(b => b.id !== id); },
+
+                async addTransaction() {
+                    if (!this.newTransaction.amount || !this.newTransaction.category.trim()) return;
+                    const p = { ...this.newTransaction, date: this.todayDateFormatted };
+                    const res = await this.apiCall('add_transaction', p);
+                    if (res.ok) {
+                        this.transactions.unshift({ id: res.id, ...p, created_at: new Date().toISOString() });
+                        this.newTransaction = { type: 'expense', amount: '', category: '', note: '' };
+                        this.addToast('Transaction added');
+                    }
+                },
+                async deleteTransaction(id) { await this.apiCall('delete_transaction', { id }); this.transactions = this.transactions.filter(t => t.id !== id); this.addToast('Transaction deleted', 'error'); },
+                get financeBalance() { return this.transactions.reduce((acc, t) => acc + (t.type === 'income' ? parseFloat(t.amount) : -parseFloat(t.amount)), 0).toFixed(2); },
+
+                async addGoal() {
+                    if (!this.newGoal.title.trim()) return;
+                    const res = await this.apiCall('add_goal', this.newGoal);
+                    if (res.ok) {
+                        this.goals.unshift({ id: res.id, ...this.newGoal, progress: 0, is_completed: 0, created_at: new Date().toISOString() });
+                        this.newGoal = { title: '', target_date: '' };
+                        this.addToast('Goal added');
+                    }
+                },
+                async updateGoalProgress(id, progress) { await this.apiCall('update_goal_progress', { id, progress }); const g = this.goals.find(x => x.id === id); if(g) { g.progress = progress; g.is_completed = progress >= 100 ? 1 : 0; } },
+                async deleteGoal(id) { await this.apiCall('delete_goal', { id }); this.goals = this.goals.filter(g => g.id !== id); },
+
+                async saveJournal() {
+                    const mood = document.getElementById('journal-mood').value || 'neutral';
+                    const content = document.getElementById('journal-content').value;
+                    if(!content.trim()) return;
+                    await this.apiCall('save_journal', { date: this.todayDateFormatted, mood, content });
+                    const existing = this.journalEntries.find(j => j.date === this.todayDateFormatted);
+                    if(existing) { existing.mood = mood; existing.content = content; }
+                    else { this.journalEntries.unshift({ date: this.todayDateFormatted, mood, content, created_at: new Date().toISOString() }); }
+                    this.addToast('Journal saved');
+                },
+                get todayJournal() { return this.journalEntries.find(j => j.date === this.todayDateFormatted) || { mood: 'neutral', content: '' }; },
+
+                async addHabit() {
+                    if(!this.newHabitName.trim()) return;
+                    const res = await this.apiCall('add_habit', { name: this.newHabitName });
+                    if(res.ok) { this.habits.push({ id: res.id, name: this.newHabitName, created_at: new Date().toISOString() }); this.newHabitName = ''; this.addToast('Habit added'); }
+                },
+                async toggleHabitLog(habitId, date) {
+                    await this.apiCall('toggle_habit_log', { habit_id: habitId, date });
+                    const idx = this.habitLogs.findIndex(l => l.habit_id === habitId && l.date === date);
+                    if(idx > -1) this.habitLogs.splice(idx, 1);
+                    else this.habitLogs.push({ habit_id: habitId, date });
+                },
+                isHabitLogged(habitId, date) { return this.habitLogs.some(l => l.habit_id === habitId && l.date === date); },
+                async deleteHabit(id) { await this.apiCall('delete_habit', { id }); this.habits = this.habits.filter(h => h.id !== id); this.habitLogs = this.habitLogs.filter(l => l.habit_id !== id); },
+
+                async addVaultItem() {
+                    if(!this.newVaultItem.title.trim() || !this.newVaultItem.content.trim()) return;
+                    const res = await this.apiCall('add_vault_item', this.newVaultItem);
+                    if(res.ok) { this.vaultItems.unshift({ id: res.id, ...this.newVaultItem, created_at: new Date().toISOString() }); this.newVaultItem = { title: '', content: '' }; this.addToast('Vault item added'); }
+                },
+                async deleteVaultItem(id) { await this.apiCall('delete_vault_item', { id }); this.vaultItems = this.vaultItems.filter(v => v.id !== id); },
 
                 openModal(day) {
                     this.activeDate = this.fmtDate(day); this.newRem = ''; this.modalOpen = true;
