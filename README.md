@@ -96,6 +96,26 @@ Private repository for sensitive snippets, WiFi credentials, keys, and confident
 
 ---
 
+### 7. 🗓️ Interactive Day Agenda Modal
+Clicking any calendar cell launches a dedicated modal displaying both Gregorian and Umm al-Qura Hijri dates alongside date-specific reminder lists.
+
+![Interactive Day Modal Preview](./docs/screenshots/modal_interactive.png)
+
+* **Dual-Date Context**: Displays Gregorian day/month alongside Hijri day/month and year.
+* **Instant Reminder Dispatch**: Add and delete calendar reminders directly synced to SQLite.
+
+---
+
+### 8. 🌐 Bilingual & LTR Support (English Mode)
+Instant toggle between Arabic (RTL) and English (LTR) layouts with complete UI adaptation.
+
+![English Dashboard Preview](./docs/screenshots/english_preview.png)
+
+* **Strict LTR Clock**: Flip clock chronometer (`HH:MM:SS`) maintains strict left-to-right digit flow across both languages.
+* **Dynamic Direction Switch**: Real-time layout mirroring powered by Alpine.js.
+
+---
+
 ## 🛠️ Architecture & Tech Stack
 
 ```
@@ -113,7 +133,9 @@ calendar-hijri/
 │       ├── goals.png
 │       ├── journal.png
 │       ├── habits.png
-│       └── vault.png
+│       ├── vault.png
+│       ├── modal_interactive.png
+│       └── english_preview.png
 └── screenshot.png        # Primary dashboard overview preview
 ```
 
